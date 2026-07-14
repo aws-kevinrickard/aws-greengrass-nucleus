@@ -33,6 +33,7 @@ import software.amazon.awssdk.aws.greengrass.model.QOS;
 import software.amazon.awssdk.aws.greengrass.model.ServiceError;
 import software.amazon.awssdk.aws.greengrass.model.SubscribeToIoTCoreRequest;
 import software.amazon.awssdk.aws.greengrass.model.SubscribeToIoTCoreResponse;
+import software.amazon.awssdk.aws.greengrass.model.SubscriptionMode;
 import software.amazon.awssdk.aws.greengrass.model.UnauthorizedError;
 import software.amazon.awssdk.crt.mqtt5.packets.SubAckPacket;
 import software.amazon.awssdk.eventstreamrpc.OperationContinuationHandlerContext;
@@ -199,9 +200,18 @@ public class MqttProxyIPCAgent {
                 }
 
                 Consumer<Publish> callback = this::forwardToSubscriber;
-                com.aws.greengrass.mqttclient.v5.QOS qos = validateQoS(request.getQosAsString(), serviceName);
-                Subscribe subscribeRequest = Subscribe.builder().callback(callback).topic(topic)
-                        .qos(qos).build();
+                // RECEIVE_ONLY registers the subscription for on-device routing only (direct messages): no cloud
+                // SUBSCRIBE is sent, and qos is not validated -- qos has no meaning without a cloud subscription,
+                // so a supplied value is silently ignored. SUBSCRIBE, an absent mode, and any unrecognized value
+                // all take the existing cloud path, so new modes added to the model degrade safely to cloud
+                // behavior rather than accidentally becoming local-only.
+                Subscribe.SubscribeBuilder subscribeBuilder = Subscribe.builder().callback(callback).topic(topic);
+                if (SubscriptionMode.RECEIVE_ONLY.getValue().equals(request.getSubscriptionModeAsString())) {
+                    subscribeBuilder.skipCloudSubscribe(true);
+                } else {
+                    subscribeBuilder.qos(validateQoS(request.getQosAsString(), serviceName));
+                }
+                Subscribe subscribeRequest = subscribeBuilder.build();
 
                 try {
                     subscribedTopic = topic;
